@@ -10,7 +10,7 @@ export class UserDurableObject extends DurableObject<Env> {
     // Connection between the users clients (e.g. browsers, could be multiple) and the users singular Durable Object instance (this)
     private connections = new Map<string, WebSocket>();
     // Channels we are subscribed to as a user
-    public channels = ['general']; // Could be multiple -> ['general', 'sports', 'politics'];
+    public channels = ['general', 'sports', 'politics']; // Could be multiple -> ['general', 'sports', 'politics'];
     // A map of CHANNEL objects we have open web socket communications with
     private channelConnections = new Map<string, WebSocket>();
 

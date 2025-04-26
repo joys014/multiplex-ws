@@ -21,6 +21,7 @@
     
     <input type="text" id="messageInput" placeholder="Type your message">
     <button onclick="sendMessage()">Send Message</button>
+    <button onclick="disconnect()">Disconnect</button>
 
     <script>
         let ws;
@@ -62,6 +63,14 @@
                 ws.send(message);
                 addMessage('Sent', message);
                 messageInput.value = '';
+            }
+        }
+
+        function disconnect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                statusElement.textContent = 'Status: Disconnected';
+                addMessage('System', 'Manually disconnected from server');
             }
         }
 
