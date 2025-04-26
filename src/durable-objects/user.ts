@@ -24,11 +24,14 @@ export class UserDurableObject extends DurableObject<Env> {
         // them know we received their message.
         for (const [_, socket] of this.connections.entries()) {
             if (socket === ws) {
-                ws.send(message);
+                ws.send(`[USER]: Echo message = ${message}`);
 
-                // Forward message to all connected channels
-                for (const [_, channelSocket] of this.channelConnections.entries()) {
-                    channelSocket.send(message);
+                const { channel, message: userMessage } = JSON.parse(message)
+
+                // Only forward message to the specified channel
+                const channelSocket = this.channelConnections.get(channel);
+                if (channelSocket) {
+                    channelSocket.send(userMessage);
                 }
 
                 break;

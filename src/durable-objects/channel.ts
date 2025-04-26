@@ -15,7 +15,7 @@ export class ChannelDurableObject extends DurableObject<Env> {
     }
 
     async webSocketMessage(ws: WebSocket, message: any) {
-        ws.send('Channel received message, echo...')
+        ws.send(`[CHANNEL]: Received message from [USER]`);
     }
 
     async webSocketClose(
