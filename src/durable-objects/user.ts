@@ -10,7 +10,7 @@ export class UserDurableObject extends DurableObject<Env> {
     // Connection between the users clients (e.g. browsers, could be multiple) and the users singular Durable Object instance (this)
     private connections = new Map<string, WebSocket>();
     // Channels we are subscribed to as a user
-    public channels = ['general', 'sports', 'politics']; // Could be multiple -> ['general', 'sports', 'politics'];
+    public channels = ['general', 'sports', 'politics'];
     // A map of CHANNEL objects we have open web socket communications with
     private channelConnections = new Map<string, WebSocket>();
 
@@ -24,11 +24,17 @@ export class UserDurableObject extends DurableObject<Env> {
         // them know we received their message.
         for (const [_, socket] of this.connections.entries()) {
             if (socket === ws) {
+                // To show the user that we have received their message, immediately
+                // echo their message back to them for confirmation of receipt.
                 ws.send(`[USER]: Echo message = ${message}`);
 
+                // An incoming message will have two properties to it. The "channel"
+                // to mark its intended destination in the multiplexing setup and the
+                // "message" to send it.
                 const { channel, message: userMessage } = JSON.parse(message)
 
-                // Only forward message to the specified channel
+                // Only forward the users message to the specified channel if the
+                // connection to said channel exists.
                 const channelSocket = this.channelConnections.get(channel);
                 if (channelSocket) {
                     channelSocket.send(userMessage);
@@ -59,6 +65,9 @@ export class UserDurableObject extends DurableObject<Env> {
         reason: string,
         wasClean: boolean
     ) {
+        // When a particular client has ended its websocket connection, we should 
+        // find its entry in our connections map and prune it from our list we are
+        // managing.
         for (const [id, socket] of this.connections.entries()) {
             if (socket === ws) {
                 this.connections.delete(id);
@@ -66,8 +75,9 @@ export class UserDurableObject extends DurableObject<Env> {
             }
         }
 
-        // If all our users clients have ceased to exist, sever all
-        // channel relationships with their websocket connection.
+        // When our websocket connections between CLIENT <-> USER durable object
+        // have all been closed, we should close all of our non-hibernatable connections
+        // between USER <-> CHANNEL as well.
         if (this.connections.size === 0) {
             this.changeSubscriptionStatus(false);
             console.log('Closed all CHANNEL connections.')
@@ -79,11 +89,12 @@ export class UserDurableObject extends DurableObject<Env> {
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url)
 
-        // Establish a websocket connection between client <-> USER durable object (this).
+        // Establish a websocket connection between CLIENT <-> USER durable object (this).
         if (url.pathname === '/ws') {
             const webSocketPair = new WebSocketPair();
             const [client, server] = Object.values(webSocketPair);
 
+            // Assign a random identifier to the socket and save the pair locally.
             const connectionId = crypto.randomUUID();
             this.connections.set(connectionId, server);
             this.ctx.acceptWebSocket(server);
@@ -104,13 +115,20 @@ export class UserDurableObject extends DurableObject<Env> {
     }
 
     async changeSubscriptionStatus(subscribe: boolean) {
+        // If this function is called but we notice there are already subscribed
+        // channels then we will not attempt to create new connections to channels
+        // and instead eject early – only if the user is attempting to subscribe.
+        if (this.channelConnections.size > 0 && subscribe) return;
+
+        // If the user is subscribing to channels then we will pass the logic off
+        // to our multiplex creation function to handle establishing that.
+        // If the user is unsubscribing to channels then we should loop through
+        // them ourselves and close each of them down between USER <-> CHANNEL.
         for (const channel of this.channels) {
             try {
                 if (subscribe) {
-                    // Create a new websocket connection between USER <-> CHANNEL
                     this.createChannelSocketConnection(channel)
                 } else {
-                    // Close and remove the WebSocket connection between USER <-> CHANNEL
                     const webSocket = this.channelConnections.get(channel);
                     if (webSocket) {
                         webSocket.close();
@@ -124,9 +142,20 @@ export class UserDurableObject extends DurableObject<Env> {
     }
 
     async createChannelSocketConnection(channel: string) {
+        // Create a stub to another Durable Object based on the `channel` value
+        // the user wants to subscribe to. In this example any number of users may
+        // subscribe to any channel they want, think of it like a public chatroom.
+        // Durable Objects can support over 32,000 web socket connections at a time
+        // but the more limiting factor is usually the memory resources running the
+        // DO's and not the web socket count.
         const stubId = this.env.CHANNEL_DURABLE_OBJECT.idFromName(channel);
         const stub = this.env.CHANNEL_DURABLE_OBJECT.get(stubId);
 
+        // To create a websocket connection between two Durable Objects we can
+        // pass a request to a stubs `fetch` function which will interpret it
+        // just as it would any other request. Here we are artificially creating
+        // the request with the appropriate settings for establishing a new
+        // web socket connection.
         const response = await stub.fetch('http://internal/ws', {
             headers: {
                 'Upgrade': 'websocket',
@@ -134,21 +163,28 @@ export class UserDurableObject extends DurableObject<Env> {
             }
         });
         
+        // For socket connections, a 101 code typically means it was successful.
         if (response.status === 101) {
             const webSocket = response.webSocket;
             if (!webSocket) throw new Error('WebSocket connection failed');
             
+            // This creates an outbound socket connection to another Durable Object
+            // but it does NOT support hibernation. Outbound connections in DO's do
+            // not currently support this feature.
             await webSocket.accept();
             
-            // Add message and error handlers for the channel websocket
+            // To consolidate our code efforts, forward non-hibernatable messages to
+            // our hibernation supported webSocketMessage function.
             webSocket.addEventListener('message', (event) => {
                 this.webSocketMessage(webSocket, event.data);
             });
             
+            // And on error we'll just throw a console error for debugging purposes.
             webSocket.addEventListener('error', (error) => {
                 console.error(`Channel ${channel} WebSocket error:`, error);
             });
             
+            // Add this channel/ws pair to our map for tracking and usage.
             this.channelConnections.set(channel, webSocket);
         }
     }
