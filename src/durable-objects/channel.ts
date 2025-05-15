@@ -3,12 +3,17 @@ import { DurableObject } from "cloudflare:workers";
 import { Browsable } from "@outerbase/browsable-durable-object";
 import { Env } from "../types/env";
 
+const CONNECTIONS_LIMIT = 10_000
+const MAX_SHARD_COUNT = 5
+
 @Browsable()
 export class ChannelDurableObject extends DurableObject<Env> {
     // Hono application instance for serving routes
     private app: Hono = new Hono();
     // Map of connections between the USER <-> CHANNEL (this) durable objects. These do not hibernate.
     private connections = new Map<string, WebSocket>();
+    // Which shard version of this channel are we using currently
+    private shardVersion: number = 0;
 
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
@@ -18,7 +23,7 @@ export class ChannelDurableObject extends DurableObject<Env> {
         // When a message is received by a USER, just echo back to the USER
         // a confirmation message noting that this particularly channel has
         // received that message.
-        ws.send(`[CHANNEL]: Received message from [USER]`);
+        ws.send(`[CHANNEL - ${this.shardVersion}]: Received message from [USER]`);
     }
 
     async webSocketClose(
@@ -63,5 +68,16 @@ export class ChannelDurableObject extends DurableObject<Env> {
         }
 
         return this.app.fetch(request);
+    }
+
+    public async canSupportConnection(): Promise<{ success: boolean, limitReached?: boolean }> {
+        if (this.connections.keys.length < CONNECTIONS_LIMIT && this.shardVersion < MAX_SHARD_COUNT) {
+            return { success: true }
+        }
+
+        return { 
+            success: false,
+            limitReached: (this.shardVersion + 1) === MAX_SHARD_COUNT
+        }
     }
 } 
