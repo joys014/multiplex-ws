@@ -3,6 +3,10 @@ import { DurableObject } from "cloudflare:workers";
 import { Browsable } from "@outerbase/browsable-durable-object";
 import { Env } from "../types/env";
 
+interface ChannelMetadata {
+    channel: string;
+}
+
 const CONNECTIONS_LIMIT = 10_000
 const MAX_SHARD_COUNT = 5
 
@@ -14,16 +18,26 @@ export class ChannelDurableObject extends DurableObject<Env> {
     private connections = new Map<string, WebSocket>();
     // Which shard version of this channel are we using currently
     private shardVersion: number = 0;
+    // Marks which channel this object represents
+    private channel: string | undefined = undefined;
 
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
+    }
+
+    async init(version: number, metadata: ChannelMetadata): Promise<boolean> {
+        const { channel } = metadata;
+        this.shardVersion = version;
+        this.channel = channel;
+
+        return true;
     }
 
     async webSocketMessage(ws: WebSocket, message: any) {
         // When a message is received by a USER, just echo back to the USER
         // a confirmation message noting that this particularly channel has
         // received that message.
-        ws.send(`[CHANNEL - ${this.shardVersion}]: Received message from [USER]`);
+        ws.send(`[CHANNEL - ${this.channel}-${this.shardVersion}]: Received message from [USER]: ${message}`);
     }
 
     async webSocketClose(
@@ -71,8 +85,10 @@ export class ChannelDurableObject extends DurableObject<Env> {
     }
 
     public async canSupportConnection(): Promise<{ success: boolean, limitReached?: boolean }> {
-        if (this.connections.keys.length < CONNECTIONS_LIMIT && this.shardVersion < MAX_SHARD_COUNT) {
+        if (this.connections.size < CONNECTIONS_LIMIT) {
             return { success: true }
+        } else if (this.connections.size >= CONNECTIONS_LIMIT && this.shardVersion < MAX_SHARD_COUNT) {
+            return { success: false }
         }
 
         return { 

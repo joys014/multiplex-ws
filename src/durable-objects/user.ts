@@ -163,6 +163,11 @@ export class UserDurableObject extends DurableObject<Env> {
             throw new Error("Maximum connections to this channel and all shards.");
         }
 
+        // Now that we know we have an available shard to us, let's instantiate it in
+        // case it hasn't been already so it knows what shard number it is as well as
+        // any metadata it needs to know about (e.g. which channel it represents).
+        await stub.init(shardVersion, { channel: channel })
+
         // To create a websocket connection between two Durable Objects we can
         // pass a request to a stubs `fetch` function which will interpret it
         // just as it would any other request. Here we are artificially creating
